@@ -3,15 +3,15 @@ import torch.nn as nn
 
 class XD_RNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
-      super(XD_RNN, self).__init__()
+      super().__init__()
 
       self.hidden_size = hidden_size
       self.i2h = torch.nn.Linear(input_size + hidden_size, hidden_size)
       self.h2o = torch.nn.Linear(hidden_size, output_size)
 
     def forward(self, input, hidden):
-        combined = torch.cat(input, hidden);
-        hidden = self.i2h(combined);
+        combined = torch.cat((input, hidden), 1);
+        hidden = torch.tanh(self.i2h(combined));
         output = self.h2o(hidden)
         return output, hidden;
 
