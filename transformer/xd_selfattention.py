@@ -61,4 +61,48 @@ class XD_MultiHeadAttention(nn.Module):
 
     return output
     
-        
+
+
+""" 
+  Feed Forward
+
+  - 선형 변환 (embed_dim -> hidden_dim) -> 활성화 함수 -> 선형 변환 (hidden_dim -> embed_dim)
+"""
+class XD_FeedForward(nn.Module):
+  def __init__(self, embed_dim, hidden_dim):
+    super().__init__()
+
+    self.feed_forward = nn.Sequential(
+      nn.Linear(embed_dim, hidden_dim),
+      nn.ReLU(),
+      nn.Linear(hidden_dim, embed_dim)
+    )
+
+  def forward(self, x):
+    return self.feed_forward(x)
+
+
+
+"""
+  TransformerBlock 
+
+  : Layer Normalization -> Multi-Head Attention -> Add (Skip Connection) -> Layer Normalization -> Feed Forward -> Add (Skip Connection)
+"""
+class XD_TransformerBlock(nn.Module):
+  def __init__(self, embed_dim, num_heads, bias=False):
+    super().__init__()
+
+    self.layer_norm1 = nn.LayerNorm(embed_dim)
+    self.mhead_atten = XD_MultiHeadAttention(embed_dim, num_heads)
+
+    self.layer_norm2 = nn.LayerNorm(embed_dim)
+    self.feed_forword = XD_FeedForward(embed_dim, 4*embed_dim)
+
+
+  def forward(self, x):
+    # Layer Normalization (with skip connection)
+    x = x + self.mhead_atten(self.layer_norm1(x))
+    # Feed Forward (with skip connection)
+    x = x + self.feed_forword(self.layer_norm2(x))
+
+    return x
