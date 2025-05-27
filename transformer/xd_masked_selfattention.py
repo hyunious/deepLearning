@@ -29,16 +29,16 @@ class XD_MaskedSelfAttention(nn.Module):
     score = score / key.size(-1) ** 0.5
 
     # mask 생성 : x device 에 맞는 형태의 행렬 생성
-    mask = torch.tril(torch.ones(score.size(-2), score.size(-1))).to(x.device)
+    mask = torch.tril(torch.ones(score.size(1), score.size(1))).to(x.device)
     # mask == 0 인 곳을 softmax 에서 0 이 되도록 -inf 로 채움
-    score = score.masked_fill(mask == 0, -float('-inf'))
+    score = score.masked_fill(mask == 0, float('-inf'))
 
     # score softmax
     attention_weights = torch.softmax(score, dim=-1)
     # output = attention_weights @ value
-    weighted_value = torch.matmul(attention_weights, value)
+    weighted_values = torch.matmul(attention_weights, value)
 
-    return weighted_value
+    return weighted_values
     
 
 
@@ -99,6 +99,7 @@ class XD_TransformerDecoderBlock(nn.Module):
 
     self.layer_norm1 = nn.LayerNorm(embed_dim)
     self.masked_multi_head_attention = XD_MaskedMultiHeadAttention(embed_dim, num_heads, bias)
+    
     self.layer_norm2 = nn.LayerNorm(embed_dim)
     self.feed_forward = XD_FeedForward(embed_dim, 4*embed_dim)
     
