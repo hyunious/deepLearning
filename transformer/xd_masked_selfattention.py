@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 
 """
-  Self-Attention
+  Masked Self-Attention
 """
-class XD_SelfAttention(nn.Module):
+class XD_MaskedSelfAttention(nn.Module):
   def __init__(self, embed_dim, atten_dim, bias=False):
     super().__init__()
 
@@ -27,6 +27,12 @@ class XD_SelfAttention(nn.Module):
     score = torch.matmul(query, key.transpose(-2, -1))
     # score smoothing
     score = score / key.size(-1) ** 0.5
+
+    # mask 생성 : x device 에 맞는 형태의 행렬 생성
+    mask = torch.tril(torch.ones(score.size(-2), score.size(-1))).to(x.device)
+    # mask == 0 인 곳을 softmax 에서 0 이 되도록 -inf 로 채움
+    score = score.masked_fill(mask == 0, -float('-inf'))
+
     # score softmax
     attention_weights = torch.softmax(score, dim=-1)
     # output = attention_weights @ value
@@ -37,19 +43,16 @@ class XD_SelfAttention(nn.Module):
 
 
 """
-  Multi-Head Attention 
-  - attention dimension 은 embed_dim / num_heads 로 계산합니다.
+  Masked Multi-Head Attention
 """
-class XD_MultiHeadAttention(nn.Module):
+class XD_MaskedMultiHeadAttention(nn.Module):
   def __init__(self, embed_dim, num_heads, bias=False):
     super().__init__()
 
-    # 20 // 4 = 5
     atten_dim = embed_dim // num_heads
 
-    self.attentions = nn.ModuleList([XD_SelfAttention(embed_dim, atten_dim) for _ in range(num_heads)])
+    self.attentions = nn.ModuleList([XD_MaskedSelfAttention(embed_dim, atten_dim) for _ in range(num_heads)])
     self.fc = nn.Linear(embed_dim, embed_dim)
-
 
   def forward(self, x):
     # 각 헤드의 출력을 수집하여 최종 출력을 생성
@@ -60,11 +63,12 @@ class XD_MultiHeadAttention(nn.Module):
     output = self.fc(cancatenated_head_outputs)
 
     return output
-    
+  
 
 
-""" 
-  Feed Forward
+
+"""
+  Feed Forward for transformer decoder
 
   - 선형 변환 (embed_dim -> hidden_dim) -> 활성화 함수 -> 선형 변환 (hidden_dim -> embed_dim)
 """
@@ -74,7 +78,7 @@ class XD_FeedForward(nn.Module):
 
     self.feed_forward = nn.Sequential(
       nn.Linear(embed_dim, hidden_dim),
-      nn.ReLU(),
+      nn.GELU(),
       nn.Linear(hidden_dim, embed_dim)
     )
 
@@ -83,26 +87,28 @@ class XD_FeedForward(nn.Module):
 
 
 
-"""
-  TransformerBlock 
 
-  : Layer Normalization -> Multi-Head Attention -> Add (Skip Connection) -> Layer Normalization -> Feed Forward -> Add (Skip Connection)
 """
-class XD_TransformerBlock(nn.Module):
+  Transformer Block for decoder
+
+  : Layer Normalization -> Masked Multi-Head Attention -> Add (Skip Connection) -> Layer Normalization -> Feed Forward -> Add (Skip Connection)
+"""
+class XD_TransformerDecoderBlock(nn.Module):
   def __init__(self, embed_dim, num_heads, bias=False):
     super().__init__()
 
     self.layer_norm1 = nn.LayerNorm(embed_dim)
-    self.mhead_atten = XD_MultiHeadAttention(embed_dim, num_heads)
-
+    self.masked_multi_head_attention = XD_MaskedMultiHeadAttention(embed_dim, num_heads, bias)
     self.layer_norm2 = nn.LayerNorm(embed_dim)
-    self.feed_forword = XD_FeedForward(embed_dim, 4*embed_dim)
-
-
+    self.feed_forward = XD_FeedForward(embed_dim, 4*embed_dim)
+    
   def forward(self, x):
-    # Layer Normalization > Multi-Head Attention -> Add (Skip Connection)
-    x = x + self.mhead_atten(self.layer_norm1(x))
-    # Layer Normalization > Feed Forward -> Add (Skip Connection)
-    x = x + self.feed_forword(self.layer_norm2(x))
+    # Layer Normalization -> Masked Multi-Head Attention -> Add (Skip Connection)
+    x = x + self.masked_multi_head_attention(self.layer_norm1(x))
+
+    # Layer Normalization -> Feed Forward -> Add (Skip Connection)
+    x = x + self.feed_forward(self.layer_norm2(x))
 
     return x
+
+
