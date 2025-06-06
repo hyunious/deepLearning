@@ -24,7 +24,8 @@ def exists(val):
     return val is not None
 
 def cast_tuple(val, depth):
-    return val if isinstance(val, tuple) else (val,) * depth
+    # val이 tuple이면 그대로 반환하고, 아니면 val을 depth번 반복한 tuple을 반환
+    return val if isinstance(val, tuple) else tuple([val] * depth)
 
 # classes
 
@@ -178,18 +179,21 @@ class XD_PreNorm(nn.Module):
 
 class XD_MiT(nn.Module):
   """
-    MiT : Mix Transformer Encoder - (Efficient Self-Attention + Mix-FFN + Overlapping Patch Embedding) Blocks
+    MiT : Segformer Encoder - (Overlap Patch Embedding + Efficient Self-Attention + Mix-FFN + Overlap Patch Merging) Transformer Blocks
 
-    Hierarchical Encoder 로 총 4단계 (1/4 -> 1/8 -> 1/16 -> 1/32 해상도) 의 계층적 구조를 가지며, 이를 통해 다중 스케일 정보를 학습한다.
+    Hierarchical Feature Representation 는 총 4단계 (1/4 -> 1/8 -> 1/16 -> 1/32 해상도) 의 계층적 구조를 통해 구성되며, 이를 통해 다중 스케일 정보를 학습한다.
   """
-  def __init__(self, *, in_channels, stage_output_channels, num_heads, ff_expansion_factor = 4, ea_reduction_ratio = 2, num_layers = 4):
+  def __init__(self, *, in_channels, stage_output_channels, num_heads, expansion_factors, reduction_ratios, num_layers):
     """
+      Hierachical Encoder Stages : 4단계 (1/4 -> 1/8 -> 1/16 -> 1/32 해상도) 
+      input tuples(stage_output_channels, num_heads, expansion_factors, reduction_ratios, num_layers) 들의 길이는 4여야 함
+
       1. in_channels : 입력 채널 수
-      2. stage_output_channels : stage 별 출력 채널 수 : []
-      3. num_heads : multi-head attention 헤드 수
-      4. ff_expansion_factor : MixFFN 확장 인자
-      5. ea_reduction_ratio : Efficient Attention 감소 비율
-      6. num_layers : Transformer Block 수
+      2. stage_output_channels : stage 별 출력 채널 수 : tuple
+      3. num_heads : multi-head attention 헤드 수 : tuple
+      4. expansion_factors : mix-feed forward network 확장 인자 : tuple
+      5. reduction_ratios : efficient attention 감소 비율 : tuple
+      6. num_layers : (efficient attention + mix-ffn) layer 수 : tuple
     """
     super().__init__()
 
@@ -207,7 +211,8 @@ class XD_MiT(nn.Module):
     self.stages = nn.ModuleList([])
 
     # each stage : each transformer block 을 구성한다.
-    for (dim_in, dim_out), (kernel, stride, padding) in zip(stage_dim_pairs, stage_kernel_stride_padding):
+    for (dim_in, dim_out), (kernel, stride, padding), head_count, expansion_factor, reduction_ratio, layer_count in \
+      zip(stage_dim_pairs, stage_kernel_stride_padding, num_heads, expansion_factors, reduction_ratios, num_layers):
       #  get overlap patches : 컨볼루션 연산 시 겹치는 부분을 계산하여 출력 크기를 조절
       #  kernel_size=7, stride=4, padding=3  >>> 출력 크기 = (H-7+2*3)/4 + 1 = (H-1)/4 + 1
       #  kernel_size=3, stride=2, padding=1  >>> 출력 크기 = (H-3+2*1)/2 + 1 = (H-1)/2 + 1
@@ -230,10 +235,10 @@ class XD_MiT(nn.Module):
       """      
       attention_layers= nn.ModuleList([])      
       
-      for _ in range(num_layers):
+      for _ in range(layer_count):
         attention_layers.append(nn.ModuleList([
-          XD_PreNorm(dim_out, XD_EfficientAttention(embed_dim = dim_out, num_heads = num_heads, reduction_ratio = ea_reduction_ratio)),
-          XD_PreNorm(dim_out, XD_MixFFN(embed_dim = dim_out, expansion_factor = ff_expansion_factor))
+          XD_PreNorm(dim_out, XD_EfficientAttention(embed_dim = dim_out, num_heads = head_count, reduction_ratio = reduction_ratio)),
+          XD_PreNorm(dim_out, XD_MixFFN(embed_dim = dim_out, expansion_factor = expansion_factor))
         ]))
       
 
@@ -246,10 +251,6 @@ class XD_MiT(nn.Module):
          attention_layers
       ]))
 
-
-      """
-        Overlap patches merging 부분은 없음.
-      """
 
 
 
@@ -287,11 +288,67 @@ class XD_MiT(nn.Module):
 
 
 
+class XD_SegFormer(nn.Module):
+  """
+    XD_SegFormer : SegFormer 모델을 구현합니다.
+  """
+  def __init__(self, *, 
+        in_channels = 3, 
+        stage_output_channels = (32, 64, 160, 256),
+        num_heads = (1, 2, 5, 8),
+        expansion_factors = (8, 8, 4, 4), 
+        reduction_ratios = (8, 4, 2, 1), 
+        num_layers = (2, 2, 2, 2),
+        decoder_dim = 256,
+        num_classes = 4
+      ):
+    
+    """
+      1. in_channels : 입력 채널 수
+      2. stage_output_channels : stage 별 출력 채널 수 : []
+      3. num_heads : multi-head attention 헤드 수
+      4. expansion_factor : mix-feed forward network 확장 인자
+      5. reduction_ratio : efficient attention 감소 비율
+      6. num_layers : (efficient attention + mix-ffn) layer 수
+    """   
+    super().__init__()
+  
+    # 모든 파라미터를 4개의 요소를 가지는 tuple로 변환
+    stage_output_channels, num_heads, expansion_factors, reduction_ratios, num_layers = map(partial(cast_tuple, depth = 4), (stage_output_channels, num_heads, expansion_factors, reduction_ratios, num_layers))
+    # 모든 파라미터가 4개의 요소를 가지는지 확인
+    assert all([*map(lambda t: len(t) == 4, (stage_output_channels, num_heads, expansion_factors, reduction_ratios, num_layers))]), 'only four stages are allowed, all keyword arguments must be either a single value or a tuple of 4 values'
 
 
+    # SegFormer Encoder
+    self.encoder = XD_MiT(in_channels = in_channels, stage_output_channels = stage_output_channels, num_heads = num_heads, expansion_factor = expansion_factors, reduction_ratio = reduction_ratios, num_layers = num_layers)
+    
+    # SegFormer Decoder
+    # 1. MLP Layers : (MLP -> UpSampling) layers : 모든 Encoder Stages 의 출력을 각각 처리.
+    #                 stage output의 크기 (1/4, 1/8, 1/16, 1/32) -> 1/4로 upsampling.
+    self.mlps = nn.ModuleList([nn.Sequential(
+       nn.Conv2d(stage_dim, decoder_dim, 1),
+       nn.Upsample(scale_factor = 2 ** i)
+    ) for i, stage_dim in enumerate(stage_output_channels)])
 
+    # 2. Last MLP : for segmentation
+    self.last_mlp = nn.Sequential(
+        nn.Conv2d(4*decoder_dim, decoder_dim, 1),
+        nn.Conv2d(decoder_dim, num_classes, 1)
+    )
 
+    
 
+  def forward(self, x):
+    # 1. Encoder
+    stage_outputs = self.encoder(x, return_stage_outputs = True)
+
+    # 2. Decoder
+    # pass through MLP Layers
+    mlp_outputs = [mlp(stage_output) for mlp, stage_output in zip(self.mlps, stage_outputs)]
+    # last MLP for segmentation
+    last_mlp_output = self.last_mlp(torch.cat(mlp_outputs, dim = 1))
+
+    return last_mlp_output
 
 
      

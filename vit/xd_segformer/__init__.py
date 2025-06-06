@@ -1,0 +1,1 @@
+from xd_segformer.xd_segformer import XD_SegFormer
