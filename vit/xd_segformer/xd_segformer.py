@@ -9,6 +9,7 @@
 # einops : Tensor shape 을 가독성있게 (직관적으로) 변환하는 라이브러리
 # https://github.com/arogozhnikov/einops
 # https://eumgill98.tistory.com/109
+# pip install einops
 
 
 import torch
